@@ -2,7 +2,9 @@ using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.XR;
+using UnityEngine.XR.Interaction.Toolkit;
 using Photon.Pun;
+using System.Linq;
 
 public class MovementManager : MonoBehaviourPunCallbacks
 {
@@ -28,17 +30,15 @@ public class MovementManager : MonoBehaviourPunCallbacks
     public int tele = 0;
     private Vector3 moveDir;
 
-    bool isUnderRepulsorEffect = false;
-    bool isUnderTractorEffect = false;
-    public float repulsorForceMagnitude;
-    Vector3 repulsorForceDirection;
-    Vector3 repulsorForcePosition;
-    float repulsorEffectDuration = 5.0f;
 
     private AudioSource repulsorSE;
     private AudioSource teleportSE;
     public AudioSource fastSE;
     public AudioSource jumpSE;
+
+    private Transform[] banners;
+    private Transform gazedAtBanner = null;
+    public GameObject CurrentPutter;
     // Start is called before the first frame update
     void Start()
     {
@@ -64,7 +64,13 @@ public class MovementManager : MonoBehaviourPunCallbacks
         myXRRig = myXrOrigin.transform;
         myCam = GameObject.FindWithTag("MainCamera").transform;
         inputData = myXrOrigin.GetComponent<InputData>();
+        
+        GameObject[] bannerObjects = GameObject.FindGameObjectsWithTag("Banner");
+        banners = bannerObjects.Select(obj => obj.transform).ToArray();
+        
 
+        photonView.RPC("CreatePutterNetwork", RpcTarget.All);
+        
     }
 
     // Update is called once per frame
@@ -73,7 +79,7 @@ public class MovementManager : MonoBehaviourPunCallbacks
         if(myView.IsMine)
         {
 
-            myXRRig.position = myChild.transform.position + Vector3.up * 1f;
+            myXRRig.position = myRB.transform.position + Vector3.up * 0.8f;
 
             if(inputData.leftController.TryGetFeatureValue(CommonUsages.primary2DAxis, out Vector2 movement))
             {
@@ -82,7 +88,21 @@ public class MovementManager : MonoBehaviourPunCallbacks
                 
                 moveDir = new Vector3(xInput, 0, yInput).normalized;
             }
-            
+
+            // if(Input.GetKeyDown(KeyCode.Space))
+            // {
+            //     TeleportPlayer();
+            //     Debug.Log("Space key was pressed.");
+            // }
+            if (Input.GetKeyDown(KeyCode.Space))
+            {
+                if(isGrounded){
+                Jump();
+                }
+                else{
+                    Debug.Log("123");
+                }
+            }
         }
     }
 
@@ -90,6 +110,8 @@ public class MovementManager : MonoBehaviourPunCallbacks
     {
 
             //PlanetGravity();
+        if(myView.IsMine)
+        {
             Vector2 movement = default(Vector2);
             if (XRSettings.enabled)
             {
@@ -103,80 +125,118 @@ public class MovementManager : MonoBehaviourPunCallbacks
             }
 
             //AlignBodyToCamera();
-            moveDir = new Vector3(movement.x, 0, movement.y).normalized;
-            myRB.MovePosition(myRB.position + myChild.transform.TransformDirection(moveDir) * movementSpeed * Time.deltaTime);
-            //JoyStickMovement(movement.x, movement.y);
-            
-            // if (isUnderRepulsorEffect) {
-            //     repulsorForceDirection = (myChild.transform.position - repulsorForcePosition);
-            //     if(myRB.velocity.magnitude < 20){
-            //     myRB.AddForce(repulsorForceDirection * repulsorForceMagnitude, ForceMode.Force);
-            //     }
-            // }
+            Vector3 forward = myCam.forward;
+            Vector3 right = myCam.right;
+            // Remove any vertical (y-axis) movement from the camera's forward and right vectors
+            forward.y = 0;
+            right.y = 0;
 
-            // if (isUnderTractorEffect){
-            //     repulsorForceDirection = -(myChild.transform.position - repulsorForcePosition);
-            //     if(myRB.velocity.magnitude < 20){
-            //     myRB.AddForce(repulsorForceDirection * repulsorForceMagnitude, ForceMode.Force);
-            //     }
-                
-            // }
+            // Normalize the vectors (important to prevent faster movement when moving diagonally)
+            forward.Normalize();
+            right.Normalize();
+
+            moveDir = (forward * movement.y + right * movement.x).normalized;
+            //moveDir = new Vector3(movement.x, 0, movement.y).normalized;
+            myRB.MovePosition(myRB.position + myChild.transform.TransformDirection(moveDir) * movementSpeed * Time.deltaTime);
+
+            
+            CheckGaze();
             if (inputData.leftController.TryGetFeatureValue(CommonUsages.primary2DAxisClick, out bool jump)&& jump && isGrounded )
             {
                 Jump();
             }
+            if (inputData.rightController.TryGetFeatureValue(CommonUsages.primary2DAxisClick, out bool tele)&& tele && gazedAtBanner != null )
+            {
+                TeleportPlayer();
+            }
 
-        // if (myView.IsMine)
-        // {
-        //     if (cameraOffset != null)
-        //     {
-        //         // Align the camera offset's up direction opposite to gravity.
-        //         // This maintains the camera's horizon alignment.
-        //         Vector3 cameraUp = myChild.transform.up;
-        //         Quaternion cameraTargetOrientation = Quaternion.FromToRotation(cameraOffset.up, cameraUp) * cameraOffset.rotation;
-        //         cameraOffset.rotation = Quaternion.Slerp(cameraOffset.rotation, cameraTargetOrientation, Time.deltaTime * 5);
-        //         cameraOffset.position = myChild.transform.position + cameraOffset.rotation * Vector3.up * 0.3f;
-        //     }
-        // }
-        
+
+        }
+
     }
 
 
+    public void CreatePutter()
+    {
+        if (CurrentPutter != null)
+        {
+            CurrentPutter.GetComponent<BallSpawner>().DestroyBall();
+            PhotonNetwork.Destroy(CurrentPutter);
+        }
 
-    // private void AlignBodyToCamera()
-    // {
-    //     // Extract the horizontal (y-axis) rotation from the camera.
-    //     float yRotation = myCam.eulerAngles.y;
+        // Instantiate at a specific location or based on player position
+        CurrentPutter = PhotonNetwork.Instantiate("Putter", myRB.position, Quaternion.identity);
+        CurrentPutter.GetComponent<BallSpawner>().HandleGrab();
+    }
+    public void CreatePutter2()
+    {
+        if (CurrentPutter != null)
+        {
+            PhotonNetwork.Destroy(CurrentPutter);
+        }
 
-    //     // Combine current body rotation with camera y-axis rotation. Maintain body's local up vector alignment.
-    //     myChild.transform.rotation = Quaternion.Euler(0, yRotation,0);
-    // }
+        // Instantiate at a specific location or based on player position
+        CurrentPutter = PhotonNetwork.Instantiate("Putter", myRB.position, Quaternion.identity);
+        CurrentPutter.GetComponent<BallSpawner>().SpawnBall();
+    }
+
+    void CheckGaze()
+    {
+        Ray ray = new Ray(myCam.position, myCam.forward);
+        RaycastHit hit;
+        
+        if (Physics.Raycast(ray, out hit))
+        {
+            foreach (Transform banner in banners)
+            {
+                if (hit.transform == banner)
+                {
+                    gazedAtBanner = banner;
+                    return;
+                }
+            }
+        }
+
+        gazedAtBanner = null; // Reset if no banner is gazed at
+    }
 
     private void Jump()
     {
         // Apply an upward force to the Rigidbody to simulate jumping
-        if (myView.IsMine)
+
+        myRB.AddForce(myChild.transform.up.normalized * jumpForce, ForceMode.Impulse);
+        isGrounded = false; // Character is now in the air
+    }
+
+    void TeleportPlayer()
+    {
+        if(gazedAtBanner != null){
+            var teleportPosition = gazedAtBanner.GetChild(0).gameObject.transform.position;
+            gazedAtBanner = null;
+
+            myRB.MovePosition(teleportPosition);
+        }
+        photonView.RPC("CreatePutterNetwork", RpcTarget.All);
+    }
+
+    [PunRPC]
+    void CreatePutterNetwork()
+    {
+        // This RPC will be executed by all clients, but the putter creation
+        // should only occur for the local player who initiated the teleport
+        if (photonView.IsMine)
         {
-            if(tele > 0){
-                Vector3 forwardDirection = myXRRig.forward;
-                Vector3 newPosition = myRB.position + forwardDirection * 50;
-                myRB.MovePosition(newPosition);
-                tele -= 1;
-                if(teleportSE != null){
-                    teleportSE.Play();
-                }
-                myView.RPC("NetworkedTeleport", RpcTarget.Others, newPosition);
-            }
-            else{
-                myRB.AddForce(myChild.transform.up.normalized * jumpForce, ForceMode.Impulse);
-                if(jumpSE != null){
-                    jumpSE.Play();
-                }
-                myView.RPC("NetworkedJump", RpcTarget.Others, myRB.position, myChild.transform.up.normalized * jumpForce);
-            }
-            isGrounded = false; // Character is now in the air
+            CreatePutter();
         }
     }
+
+    // [PunRPC]
+    // void TeleportPlayerNetwork(Vector3 position)
+    // {
+    //     // This will be executed by all clients in the room
+    //     myRB.MovePosition(position);
+    //     CreatePutter();
+    // }
 
     public void SetGroundedState(bool grounded)
     {
@@ -191,84 +251,79 @@ public class MovementManager : MonoBehaviourPunCallbacks
         myRB.AddForce(jumpForce, ForceMode.Impulse);
     }
 
-    [PunRPC]
-    private void NetworkedTeleport(Vector3 newPosition)
-    {
-        // This method is called on all other clients to visualize the teleportation
-        myRB.MovePosition(newPosition);
-    }
 
-    [PunRPC]
-    public void ChangePlayerMaterial()
-    {
-        // Find the material by name (ensure the material is in a Resources folder)
-        Vector3 randomPositionOnSphere = Random.onUnitSphere * (planetCenter.localScale.x * 30 * 0.5f + 1f);
-        Vector3 spawnPosition = planetCenter.position + randomPositionOnSphere;
-        myRB.MovePosition(spawnPosition);
-        Material newMat = Resources.Load<Material>("M1");
+
+    // [PunRPC]
+    // public void ChangePlayerMaterial()
+    // {
+    //     // Find the material by name (ensure the material is in a Resources folder)
+    //     Vector3 randomPositionOnSphere = Random.onUnitSphere * (planetCenter.localScale.x * 30 * 0.5f + 1f);
+    //     Vector3 spawnPosition = planetCenter.position + randomPositionOnSphere;
+    //     myRB.MovePosition(spawnPosition);
+    //     Material newMat = Resources.Load<Material>("M1");
         
-        if (newMat != null)
-        {
-            Renderer playerRenderer = this.GetComponentInChildren<Renderer>();
-            if (playerRenderer != null && playerRenderer.material != newMat)
-            {
-                playerRenderer.material = newMat;
-                if (myView.IsMine)
-                {
-                    FindObjectOfType<UIManager>().SetAsCatcher();
-                }
-            }
-        }
-    }
+    //     if (newMat != null)
+    //     {
+    //         Renderer playerRenderer = this.GetComponentInChildren<Renderer>();
+    //         if (playerRenderer != null && playerRenderer.material != newMat)
+    //         {
+    //             playerRenderer.material = newMat;
+    //             if (myView.IsMine)
+    //             {
+    //                 FindObjectOfType<UIManager>().SetAsCatcher();
+    //             }
+    //         }
+    //     }
+    // }
 
-    [PunRPC]
-    public void ChangeToWhiteMaterial()
-    {
-        Material whiMat = Resources.Load<Material>("white");
-        Renderer renderer = this.GetComponentInChildren<Renderer>();
-        if (renderer != null)
-        {
-            renderer.material = whiMat;
-            if (myView.IsMine)
-            {
-                FindObjectOfType<UIManager>().SetAsRunner();
-            }
-        }
-    }
+    // [PunRPC]
+    // public void ChangeToWhiteMaterial()
+    // {
+    //     Material whiMat = Resources.Load<Material>("white");
+    //     Renderer renderer = this.GetComponentInChildren<Renderer>();
+    //     if (renderer != null)
+    //     {
+    //         renderer.material = whiMat;
+    //         if (myView.IsMine)
+    //         {
+    //             FindObjectOfType<UIManager>().SetAsRunner();
+    //         }
+    //     }
+    // }
 
-    [PunRPC]
-    public void ApplyRepulsorEffect(Vector3 repulsorPosition) {
-        //Vector3 directionFromRepulsor = (transform.position - repulsorPosition).normalized;
-        //repulsorForceDirection = directionFromRepulsor;
-        repulsorForcePosition = repulsorPosition;
-        isUnderRepulsorEffect = true;
-        if (repulsorSE != null) {
-            repulsorSE.Play();
-        }
-        // Stop the effect after a delay
-        StartCoroutine(StopRepulsorEffectAfterDelay(repulsorEffectDuration));
-    }
+    // [PunRPC]
+    // public void ApplyRepulsorEffect(Vector3 repulsorPosition) {
+    //     //Vector3 directionFromRepulsor = (transform.position - repulsorPosition).normalized;
+    //     //repulsorForceDirection = directionFromRepulsor;
+    //     repulsorForcePosition = repulsorPosition;
+    //     isUnderRepulsorEffect = true;
+    //     if (repulsorSE != null) {
+    //         repulsorSE.Play();
+    //     }
+    //     // Stop the effect after a delay
+    //     StartCoroutine(StopRepulsorEffectAfterDelay(repulsorEffectDuration));
+    // }
 
-    IEnumerator StopRepulsorEffectAfterDelay(float delay) {
-        yield return new WaitForSeconds(delay);
-        isUnderRepulsorEffect = false;
-    }
+    // IEnumerator StopRepulsorEffectAfterDelay(float delay) {
+    //     yield return new WaitForSeconds(delay);
+    //     isUnderRepulsorEffect = false;
+    // }
 
-    [PunRPC]
-    public void ApplyTractorEffect(Vector3 repulsorPosition) {
-        //Vector3 directionFromRepulsor = (transform.position - repulsorPosition).normalized;
-        //repulsorForceDirection = -directionFromRepulsor;
-        repulsorForcePosition = repulsorPosition;
-        isUnderTractorEffect = true;
-        if (repulsorSE != null) {
-            repulsorSE.Play();
-        }
-        // Stop the effect after a delay
-        StartCoroutine(StopTractorEffectAfterDelay(repulsorEffectDuration));
-    }
+    // [PunRPC]
+    // public void ApplyTractorEffect(Vector3 repulsorPosition) {
+    //     //Vector3 directionFromRepulsor = (transform.position - repulsorPosition).normalized;
+    //     //repulsorForceDirection = -directionFromRepulsor;
+    //     repulsorForcePosition = repulsorPosition;
+    //     isUnderTractorEffect = true;
+    //     if (repulsorSE != null) {
+    //         repulsorSE.Play();
+    //     }
+    //     // Stop the effect after a delay
+    //     StartCoroutine(StopTractorEffectAfterDelay(repulsorEffectDuration));
+    // }
 
-    IEnumerator StopTractorEffectAfterDelay(float delay) {
-        yield return new WaitForSeconds(delay);
-        isUnderTractorEffect = false;
-    }
+    // IEnumerator StopTractorEffectAfterDelay(float delay) {
+    //     yield return new WaitForSeconds(delay);
+    //     isUnderTractorEffect = false;
+    // }
 }

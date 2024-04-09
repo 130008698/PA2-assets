@@ -16,7 +16,7 @@ GameObject:
   - component: {fileID: -8303745527707435567}
   - component: {fileID: 5651457906517720518}
   - component: {fileID: -1370394469785423744}
-  m_Layer: 0
+  m_Layer: 7
   m_Name: NetworkPlayer
   m_TagString: PlayerOG
   m_Icon: {fileID: 0}
@@ -75,11 +75,11 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   movementSpeed: 4
-  jumpForce: 9
+  jumpForce: 3
   tele: 0
-  repulsorForceMagnitude: 2
   fastSE: {fileID: 0}
   jumpSE: {fileID: 0}
+  CurrentPutter: {fileID: 0}
 --- !u!114 &6228093305765863547
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -492,7 +492,7 @@ GameObject:
   - component: {fileID: 6376645872636883359}
   - component: {fileID: 6218747138251808128}
   - component: {fileID: 6430443654862235675}
-  m_Layer: 0
+  m_Layer: 7
   m_Name: Body
   m_TagString: Player
   m_Icon: {fileID: 0}
